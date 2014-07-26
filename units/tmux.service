@@ -1,0 +1,12 @@
+[Unit]
+Description=Start a tmux server
+
+[Service]
+Type=forking
+Environment=DISPLAY=:0
+Environment=TMPDIR=/tmp/teemow
+ExecStart=/usr/bin/tmux new-session -d -s default
+ExecStop=/usr/bin/tmux kill-server
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Save and restore tmux sessions
+After=tmux.service
+Requires=tmux.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+KillMode=none
+Environment=DISPLAY=:0
+Environment=TMPDIR=/tmp/teemow
+ExecStart=/usr/local/bin/tmux-session restore
+ExecStop=/usr/local/bin/tmux-session save
+
+[Install]
+WantedBy=default.target

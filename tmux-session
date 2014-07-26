@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Save and restore the state of tmux sessions, windows and panes
+# Inspired by https://github.com/mislav/dotfiles/blob/master/bin/tmux-session
+set -e
+
+SESSION_PATH=~/.tmux-session
+
+dump() {
+  local d=$'\t'
+  tmux list-panes -a -F "#S${d}#W${d}#P${d}#{window_layout}${d}#{pane_current_path}${d}#{pane_current_command}${d}#I"
+}
+
+save() {
+  local dump_path=$SESSION_PATH/$(date +%s)
+  mkdir -p $dump_path
+  chmod 700 $dump_path
+
+  rm -f $SESSION_PATH/current
+  ln -s $dump_path $SESSION_PATH/current
+
+  dump | gzip -c > $dump_path/dump
+  chmod 600 $dump_path/dump
+
+  local pane_count=0
+  local dimensions="$(terminal_size)"
+
+  while IFS=$'\t' read session_name window_name pane_index layout dir cmd window_index; do
+    local pane="$session_name:${window_index}.$pane_index"
+    local pane_file="$dump_path/pane-$session_name-${window_index}-$pane_index"
+    if [[ $cmd == "vim" ]]; then
+      tmux send-keys -t "$pane" Escape ":mksession! $pane_file" C-m
+    else
+      tmux copy-mode -t "$pane"
+      tmux send-keys -t "$pane" Space "gg" Enter
+      tmux save-buffer -b 0 $pane_file
+      tmux delete-buffer -b 0
+    fi
+  done < <(gunzip -c $dump_path/dump)
+
+  chmod 600 $dump_path/pane-*
+}
+
+terminal_size() {
+  stty size 2>/dev/null | awk '{ printf "-x%d -y%d", $2, $1 }'
+}
+
+session_exists() {
+  tmux has-session -t "$1" 2>/dev/null
+}
+
+window_exists() {
+  if [ "$(tmux list-window -t "$1" -F "#W" | grep "^$2$")" = "" ]; then
+    return 1
+  else 
+    return 0
+  fi
+}
+
+set_layout() {
+  local pane_file="$SESSION_PATH/current/pane-$1-$7-$3"
+  local pane="$1:${2}.$3"
+
+  tmux select-layout -t "$1:$2" $5 > /dev/null
+  tmux send-keys -t $pane "cd $4" C-m C-l
+
+  if [ "$6" = "vim" ]; then
+    tmux send-keys -t $pane "vim" C-m
+    tmux send-keys -t $pane ":source $pane_file" C-m
+  else
+    tmux send-keys -t $pane "cat $pane_file" C-m
+  fi
+}
+
+add_pane() {
+  tmux split-window -dh -t "$1:${2}.0"
+  set_layout "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+}
+
+add_window() {
+  tmux new-window -d -t "$1:" -n "$2"
+  set_layout "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+}
+
+new_session() {
+  tmux new-session -d -s "$1" -n "$2" $8
+  set_layout "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+}
+
+restore() {
+  tmux start-server
+  local pane_count=0
+  local dimensions="$(terminal_size)"
+
+  while IFS=$'\t' read session_name window_name pane_index layout dir cmd window_index; do
+    if [[ -d "$dir" && $session_name != "irc" && $cmd != "man" ]]; then
+      if session_exists "$session_name"; then
+        if window_exists "$session_name" "$window_name"; then
+            echo "new pane $session_name $window_name $pane_count"
+            pane_count=$(( panel_count + 1 ))
+            add_pane "$session_name" "$window_name" "$pane_count" "$dir" "$layout" "$cmd" "$window_index"
+        else
+            echo "new window $session_name $window_name $pane_count"
+            pane_count=0
+            add_window "$session_name" "$window_name" "$pane_count" "$dir" "$layout" "$cmd" "$window_index"
+        fi
+      else
+        echo "new session $session_name"
+        pane_count=0
+        new_session "$session_name" "$window_name" "$pane_count" "$dir" "$layout" "$cmd" "$window_index" "$dimensions"
+      fi
+    fi
+  done < <(gunzip -c $SESSION_PATH/current/dump)
+}
+
+case "$1" in
+save | restore )
+  $1
+  ;;
+* )
+  echo "valid commands: save, restore" >&2
+  exit 1
+esac
